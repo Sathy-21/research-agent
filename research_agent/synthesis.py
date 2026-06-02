@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import anthropic
+from google import genai
 
 from . import config, llm
 from .retrieval import Source
@@ -33,7 +33,7 @@ _SYNTHESIS_SYSTEM = (
 
 
 def answer_subquestion(
-    client: anthropic.Anthropic, subquestion: str, sources: list[Source]
+    client: genai.Client, subquestion: str, sources: list[Source]
 ) -> AnsweredSubquestion:
     """Produce a grounded answer to `subquestion` from `sources` (one LLM call).
 

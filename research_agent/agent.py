@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import anthropic
+from google import genai
 from tavily import TavilyClient
 
 from . import compose, config, planner, retrieval, synthesis
@@ -55,12 +55,12 @@ class ResearchResult:
 def run_research(question: str) -> ResearchResult:
     """Run the full research pipeline for a question and return the result."""
     settings = config.load_settings()
-    anthropic_client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    llm_client = genai.Client(api_key=settings.gemini_api_key)
     tavily_client = TavilyClient(api_key=settings.tavily_api_key)
     budget = Budget()
 
     # --- 1. Plan: decompose the question into sub-questions (Phase 2) ---
-    subquestions = planner.make_plan(anthropic_client, question)
+    subquestions = planner.make_plan(llm_client, question)
     budget.llm_calls += 1
 
     # --- 2. Loop: run the Phase 1 pipeline for each sub-question ---
@@ -72,12 +72,12 @@ def run_research(question: str) -> ResearchResult:
             break
         sources = retrieval.gather_sources(tavily_client, subquestion)
         budget.searches += 1
-        answer = synthesis.answer_subquestion(anthropic_client, subquestion, sources)
+        answer = synthesis.answer_subquestion(llm_client, subquestion, sources)
         budget.llm_calls += 1
         answered.append(answer)
 
     # --- 3. Compose: merge the sub-answers into one final report ---
-    report = compose.compose_report(anthropic_client, question, answered)
+    report = compose.compose_report(llm_client, question, answered)
     budget.llm_calls += 1
 
     return ResearchResult(

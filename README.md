@@ -15,7 +15,7 @@ It then prints the original question, the generated sub-questions, the final rep
 ## Stack
 
 - **Python** — organized as a small package (`research_agent/`) with separate modules per concern.
-- **Anthropic API** — planning and synthesis run on a cost-efficient model (Claude Haiku); the single final compose step steps up to Claude Sonnet for report quality.
+- **Google Gemini API** (free tier via Google AI Studio) — every step runs on `gemini-2.5-flash`, so the project costs nothing to run. See [DECISIONS.md](DECISIONS.md) for why Flash everywhere rather than a model split.
 - **Tavily** — web search.
 - **trafilatura** — readable-text extraction from fetched pages.
 - **python-dotenv** — loads API keys from a local `.env` file.
@@ -38,7 +38,7 @@ copy .env.example .env       # Windows  (use `cp` on macOS / Linux)
 
 You need two keys in `.env`:
 
-- `ANTHROPIC_API_KEY` — from <https://console.anthropic.com/> (Settings → API Keys).
+- `GEMINI_API_KEY` — from <https://aistudio.google.com/apikey> (free).
 - `TAVILY_API_KEY` — from <https://app.tavily.com/> (free tier available).
 
 The `.env` file is gitignored and never committed.
@@ -82,7 +82,7 @@ ResearchResult  ──▶  printed by main.py
 | Module | Responsibility |
 | --- | --- |
 | `config.py` | Loads/validates API keys from `.env`; defines model choices and run limits. |
-| `llm.py` | Thin helpers around the Anthropic Messages API (plain-text and JSON replies). |
+| `llm.py` | Thin helpers around the Gemini API (plain-text and JSON replies). |
 | `planner.py` | Phase 2 — decomposes the question into sub-questions. |
 | `retrieval.py` | Phase 1 — web search (Tavily) + readable-text extraction (trafilatura). |
 | `synthesis.py` | Phase 1 — writes a grounded answer to one sub-question and tracks its sources. |

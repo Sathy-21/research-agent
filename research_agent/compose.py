@@ -7,7 +7,7 @@ order-preserving) rather than asked of the model, so it is always accurate.
 
 from __future__ import annotations
 
-import anthropic
+from google import genai
 
 from . import config, llm
 from .retrieval import Source
@@ -35,7 +35,7 @@ def _unique_sources(answered: list[AnsweredSubquestion]) -> list[Source]:
 
 
 def compose_report(
-    client: anthropic.Anthropic, question: str, answered: list[AnsweredSubquestion]
+    client: genai.Client, question: str, answered: list[AnsweredSubquestion]
 ) -> str:
     """Compose the final report (one LLM call) and append a numbered source list."""
     findings = "\n\n".join(

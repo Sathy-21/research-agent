@@ -12,14 +12,17 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 
 # --- Model choices ---------------------------------------------------------------
-# The user asked for cost-efficient models. We use Haiku for the high-volume steps
-# (planning + per-sub-question synthesis). We step up to Sonnet for the single final
-# compose call only: weaving many sub-answers into one coherent report is the most
-# quality-sensitive step, and it runs exactly once per research run, so the extra
-# cost is marginal while the quality gain is the most visible to the reader.
-PLANNER_MODEL = "claude-haiku-4-5"
-SYNTHESIS_MODEL = "claude-haiku-4-5"
-COMPOSE_MODEL = "claude-sonnet-4-6"
+# We use Gemini's free tier (Google AI Studio) so the project costs nothing to run.
+# We use the Flash model for every step rather than splitting in a stronger model for
+# compose. The sensible stronger free-tier model would be Gemini 2.5 Pro, but on the
+# free tier Pro has very low rate limits that a multi-call research run can exhaust,
+# and (unlike Flash) it cannot disable "thinking", which makes token budgeting less
+# predictable. Flash everywhere keeps runs free, fast, and within rate limits. The
+# three constants are kept separate so a stronger compose model can be dropped in
+# later without touching the rest of the code.
+PLANNER_MODEL = "gemini-2.5-flash"
+SYNTHESIS_MODEL = "gemini-2.5-flash"
+COMPOSE_MODEL = "gemini-2.5-flash"
 
 # --- Pipeline knobs --------------------------------------------------------------
 MIN_SUBQUESTIONS = 3
@@ -42,7 +45,7 @@ class MissingAPIKey(RuntimeError):
 class Settings:
     """Validated API keys for the current run."""
 
-    anthropic_api_key: str
+    gemini_api_key: str
     tavily_api_key: str
 
 
@@ -53,13 +56,13 @@ def load_settings() -> Settings:
     caller can fail fast instead of getting an opaque error deep in an API client.
     """
     load_dotenv()
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    gemini_key = os.getenv("GEMINI_API_KEY")
     tavily_key = os.getenv("TAVILY_API_KEY")
 
     missing = [
         name
         for name, value in (
-            ("ANTHROPIC_API_KEY", anthropic_key),
+            ("GEMINI_API_KEY", gemini_key),
             ("TAVILY_API_KEY", tavily_key),
         )
         if not value
@@ -71,4 +74,4 @@ def load_settings() -> Settings:
             + ". Copy .env.example to .env and fill in your keys."
         )
 
-    return Settings(anthropic_api_key=anthropic_key, tavily_api_key=tavily_key)
+    return Settings(gemini_api_key=gemini_key, tavily_api_key=tavily_key)
