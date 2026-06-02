@@ -1,19 +1,27 @@
-"""Claim verification (Phase 3): check the composed report against the source text.
+"""Claim verification (Phase 3, hardened in Phase 5): check the report against sources.
 
-Defends against a real failure: a low-quality, off-topic source (a generic library
-fact-checking guide) was retrieved, trusted, and woven into a technical report. After
-the report is composed, we extract its factual claims and check each one against the
-ACTUAL retrieved source text — in ONE batched call, not one per claim — then report a
-grounding metric.
+After the report is composed, we extract its factual claims and check each one against
+the ACTUAL retrieved source text — in ONE batched call, not one per claim — then report
+a grounding metric.
 
-We *flag* unsupported claims rather than deleting them. Surgically removing sentences
-from finished prose would need another LLM rewrite call (cost on a rate-limited tier)
-and risks mangling the text; flagging keeps the report intact and is transparent about
-exactly what could not be grounded in the sources.
+Phase 5 fix — trustworthy extraction. The grounding number is only meaningful if the
+claims being checked are claims the report actually makes. Earlier the extraction step
+sometimes fabricated strawman claims (assertions the report never stated) and marked
+them unsupported, distorting the metric. The extraction prompt is now strict: extract
+only the report's own assertions, faithfully paraphrased, each a single checkable
+statement, at a consistent granularity — never invented, generalized, or negated. As an
+always-on instrument, each extracted claim is also checked (by a deterministic
+word-overlap heuristic) for whether it genuinely appears in the report, so fabricated
+claims are countable rather than silently skewing the grounding percentage.
+
+We *flag* unsupported claims rather than deleting them, to keep the report intact and
+transparent about what could not be grounded.
 """
 
 from __future__ import annotations
 
+import logging
+import re
 from dataclasses import dataclass
 
 from groq import Groq
@@ -21,21 +29,42 @@ from groq import Groq
 from . import config, llm
 from .retrieval import Source
 
+logger = logging.getLogger(__name__)
+
+# Strict extraction + support check. The extraction half is deliberately emphatic
+# because that was the unreliable step (see module docstring / DECISIONS.md).
 _VERIFY_SYSTEM = (
-    "You are a strict fact-checker. You are given source excerpts and a report. Break the "
-    "report into its distinct factual claims. For each claim, decide whether it is "
-    "supported by the source excerpts: a claim is 'supported' only if the sources "
-    "directly back it up. If the sources do not mention it, mark it unsupported. Judge "
-    "ONLY against the provided sources, never against prior knowledge."
+    "You are a strict fact-checker working in two steps.\n"
+    "STEP 1 — EXTRACT the report's own factual claims. Extract ONLY assertions the "
+    "report actually makes, faithfully paraphrased (verbatim-ish), each a single, "
+    "self-contained, checkable statement. Use a consistent granularity: every distinct "
+    "factual assertion is its own claim — including specific named techniques, methods, "
+    "numbers, and entities, not just broad summary sentences. Do NOT invent, generalize "
+    "beyond, negate, combine, or otherwise add claims the report does not state. If the "
+    "report makes no factual claims, return an empty list.\n"
+    "STEP 2 — For each extracted claim, decide whether the SOURCE EXCERPTS support it. "
+    "Mark it 'supported' only if the sources directly back it up; if the sources do not "
+    "mention it, mark it unsupported. Judge support ONLY against the provided sources, "
+    "never against prior knowledge."
 )
+
+# Minimum fraction of a claim's content words that must also appear in the report for
+# the claim to be considered "actually in the report". A faithful paraphrase shares most
+# of its content words with the source sentence; a fabricated strawman shares few. This
+# is a deterministic proxy (no extra LLM call), not a perfect entailment check.
+_IN_REPORT_THRESHOLD = 0.5
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
 
 
 @dataclass
 class ClaimCheck:
-    """A single factual claim and whether the sources support it."""
+    """A single factual claim, whether the sources support it, and whether it actually
+    appears in the report (fabrication guard)."""
 
     claim: str
     supported: bool
+    in_report: bool = True
 
 
 @dataclass
@@ -57,8 +86,33 @@ class VerificationReport:
         return [check.claim for check in self.claims if not check.supported]
 
     @property
+    def fabricated(self) -> int:
+        """How many extracted claims do NOT actually appear in the report."""
+        return sum(1 for check in self.claims if not check.in_report)
+
+    @property
     def percent_grounded(self) -> float:
         return 100.0 * self.supported / self.total if self.total else 0.0
+
+
+def _content_tokens(text: str) -> set[str]:
+    """Lowercased content words (length > 3) used for the in-report overlap heuristic."""
+    return {token for token in _WORD_RE.findall(text.lower()) if len(token) > 3}
+
+
+def claim_in_report(claim: str, report_body: str) -> bool:
+    """Heuristic: does `claim` actually appear in `report_body`?
+
+    Measures the fraction of the claim's content words present in the report. Returns
+    True when that fraction meets `_IN_REPORT_THRESHOLD`. If the claim has no content
+    words to compare, we do not flag it (return True).
+    """
+    claim_tokens = _content_tokens(claim)
+    if not claim_tokens:
+        return True
+    report_tokens = _content_tokens(report_body)
+    overlap = len(claim_tokens & report_tokens) / len(claim_tokens)
+    return overlap >= _IN_REPORT_THRESHOLD
 
 
 def verify_report(
@@ -79,7 +133,9 @@ def verify_report(
     user = (
         f"Sources:\n{source_text}\n\n"
         f"Report:\n{report_body}\n\n"
-        'Respond with JSON only: '
+        "Extract the factual claims the Report above actually makes (do not introduce "
+        "any claim it does not state), then check each against the Sources. "
+        "Respond with JSON only: "
         '{"claims": [{"claim": "<claim text>", "supported": true|false}, ...]}'
     )
 
@@ -99,11 +155,23 @@ def verify_report(
                 continue
             claim = str(item.get("claim", "")).strip()
             if claim:
-                checks.append(ClaimCheck(claim=claim, supported=bool(item.get("supported"))))
+                checks.append(
+                    ClaimCheck(
+                        claim=claim,
+                        supported=bool(item.get("supported")),
+                        in_report=claim_in_report(claim, report_body),
+                    )
+                )
     except (ValueError, AttributeError):
         return VerificationReport(claims=[])
 
-    return VerificationReport(claims=checks)
+    report = VerificationReport(claims=checks)
+    if report.fabricated:
+        logger.debug(
+            "%d of %d extracted claim(s) do not appear in the report (possible fabrication)",
+            report.fabricated, report.total,
+        )
+    return report
 
 
 def flag_unsupported(report_body: str, verification: VerificationReport) -> str:
