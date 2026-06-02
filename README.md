@@ -115,7 +115,7 @@ Source **text** (not just URLs) is threaded from `retrieval` through `synthesis`
 | `relevance.py` | Phase 3A — one batched LLM call per sub-question to drop off-topic sources before synthesis. |
 | `synthesis.py` | Writes a grounded answer to one sub-question and tracks its sources. |
 | `compose.py` | Writes the narrative report body; provides the deduped source-list helpers. |
-| `verify.py` | Phase 3B — checks the report's claims against the source text, flags unsupported ones, and reports a grounding metric. |
+| `verify.py` | Phase 3B/5 — extracts the report's own claims (strict, instrumented for fabrication) and checks each against the source text; flags unsupported ones and reports a grounding metric. |
 | `retries.py` | Phase 4 — shared transient-failure retry layer (exponential backoff + jitter, honours server retry hints) used by every LLM and web-search call. |
 | `agent.py` | Orchestrates the whole flow; enforces input/cost/time guardrails and partial-failure resilience; logs progress and the run summary. |
 | `main.py` | CLI entry point; configures logging (`--verbose` / `LOG_LEVEL`), prints the report and grounding summary. |
@@ -128,3 +128,52 @@ Source **text** (not just URLs) is threaded from `retrieval` through `synthesis`
 - **Cost & time guardrails** — a `Budget` caps total searches (`MAX_SEARCHES`) and LLM calls (`MAX_LLM_CALLS`); a wall-clock deadline (`MAX_RUN_SECONDS`) caps total run time. Hitting either is logged and handled gracefully (compose what's done), never a crash.
 - **Observability** — diagnostics use the `logging` module (to stderr): phases entered, per-sub-question progress, retries/backoffs, sources kept vs filtered, claims verified, and budget usage. A concise **run summary** is logged at the end: total LLM calls, total searches, wall-clock time, sub-questions succeeded vs skipped, and grounding percentage.
 - Existing graceful-failure behaviour is preserved: dead pages, unparseable JSON, and all-irrelevant sub-questions are all skipped; a missing API key fails fast with a clear message.
+
+## Evaluation (Phase 5)
+
+A small harness in `eval/` runs the agent over a benchmark of AI/RAG/hallucination
+questions and records grounding and process metrics. There are **no gold answers**: the
+harness measures how well the report's claims are grounded in retrieved sources and how
+the pipeline behaved — **not** the factual correctness of the answers.
+
+```bash
+# Quick smoke test on the first 3 questions
+python eval/run_eval.py --limit 3
+
+# Full benchmark (slower delay is gentler on Groq's per-minute limit)
+python eval/run_eval.py --delay 8
+```
+
+Per question it records: grounding % (supported/total claims), total claims, supported
+claims, **fabricated claims** (extracted claims that don't actually appear in the report,
+per the word-overlap heuristic), sub-questions succeeded vs skipped, LLM calls, search
+calls, and elapsed time. Raw results are saved to `eval/results/<mode>-<timestamp>.json`
+(gitignored) and a per-question table plus aggregate means are printed.
+
+The runner is free-tier friendly: questions run sequentially, reuse the agent's
+retry/backoff, and pause `--delay` seconds between questions. Use `--limit N` to try a
+subset first.
+
+### Before/after grounding comparison
+
+The verifier's claim-extraction prompt is selectable via the `VERIFIER_MODE` environment
+variable (`new`, the default strict prompt, or `old`, the original loose one). Run the
+eval once in each mode, then compare:
+
+```bash
+VERIFIER_MODE=old python eval/run_eval.py --limit 5   # -> eval/results/old-<ts>.json
+VERIFIER_MODE=new python eval/run_eval.py --limit 5   # -> eval/results/new-<ts>.json
+python eval/compare.py eval/results/old-<ts>.json eval/results/new-<ts>.json
+```
+
+`compare.py` prints mean grounding before vs after, mean claims/run, and how many
+fabricated/non-report claims each mode produced (the signal that the strict prompt
+extracts the report's actual claims rather than inventing strawmen).
+
+### Metrics glossary
+
+- **grounding %** — `supported / total` extracted claims; the headline trust metric.
+- **fabricated claims** — extracted claims that don't appear in the report (lower is
+  better; the Phase 5 fix drives this toward zero).
+- **sub-questions succeeded / skipped** — pipeline coverage for the run.
+- **LLM calls / search calls / elapsed** — cost and latency, bounded by the `Budget`.

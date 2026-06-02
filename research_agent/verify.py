@@ -31,9 +31,9 @@ from .retrieval import Source
 
 logger = logging.getLogger(__name__)
 
-# Strict extraction + support check. The extraction half is deliberately emphatic
-# because that was the unreliable step (see module docstring / DECISIONS.md).
-_VERIFY_SYSTEM = (
+# Strict extraction + support check (default "new" mode). The extraction half is
+# deliberately emphatic because that was the unreliable step (see DECISIONS.md).
+_VERIFY_SYSTEM_NEW = (
     "You are a strict fact-checker working in two steps.\n"
     "STEP 1 — EXTRACT the report's own factual claims. Extract ONLY assertions the "
     "report actually makes, faithfully paraphrased (verbatim-ish), each a single, "
@@ -47,6 +47,35 @@ _VERIFY_SYSTEM = (
     "mention it, mark it unsupported. Judge support ONLY against the provided sources, "
     "never against prior knowledge."
 )
+
+# Original prompt, kept available behind VERIFIER_MODE=old for before/after comparison.
+# This is the version whose loose extraction produced fabricated/strawman claims.
+_VERIFY_SYSTEM_OLD = (
+    "You are a strict fact-checker. You are given source excerpts and a report. Break the "
+    "report into its distinct factual claims. For each claim, decide whether it is "
+    "supported by the source excerpts: a claim is 'supported' only if the sources "
+    "directly back it up. If the sources do not mention it, mark it unsupported. Judge "
+    "ONLY against the provided sources, never against prior knowledge."
+)
+
+# Trailing user-message directive paired with each system prompt.
+_USER_DIRECTIVE_NEW = (
+    "Extract the factual claims the Report above actually makes (do not introduce any "
+    "claim it does not state), then check each against the Sources. "
+    'Respond with JSON only: '
+    '{"claims": [{"claim": "<claim text>", "supported": true|false}, ...]}'
+)
+_USER_DIRECTIVE_OLD = (
+    'Respond with JSON only: '
+    '{"claims": [{"claim": "<claim text>", "supported": true|false}, ...]}'
+)
+
+
+def _select_prompt() -> tuple[str, str]:
+    """Return (system, user_directive) for the active VERIFIER_MODE."""
+    if config.verifier_mode() == "old":
+        return _VERIFY_SYSTEM_OLD, _USER_DIRECTIVE_OLD
+    return _VERIFY_SYSTEM_NEW, _USER_DIRECTIVE_NEW
 
 # Minimum fraction of a claim's content words that must also appear in the report for
 # the claim to be considered "actually in the report". A faithful paraphrase shares most
@@ -130,20 +159,14 @@ def verify_report(
         f"[{i}] {source.title} ({source.url})\n{source.text}"
         for i, source in enumerate(sources, start=1)
     )
-    user = (
-        f"Sources:\n{source_text}\n\n"
-        f"Report:\n{report_body}\n\n"
-        "Extract the factual claims the Report above actually makes (do not introduce "
-        "any claim it does not state), then check each against the Sources. "
-        "Respond with JSON only: "
-        '{"claims": [{"claim": "<claim text>", "supported": true|false}, ...]}'
-    )
+    system, directive = _select_prompt()
+    user = f"Sources:\n{source_text}\n\nReport:\n{report_body}\n\n{directive}"
 
     try:
         data = llm.complete_json(
             client,
             model=config.VERIFY_MODEL,
-            system=_VERIFY_SYSTEM,
+            system=system,
             user=user,
             max_tokens=4000,
         )

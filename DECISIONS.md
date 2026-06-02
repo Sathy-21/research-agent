@@ -155,3 +155,45 @@ controlled by `--verbose` (DEBUG) or the `LOG_LEVEL` env var (default INFO). Log
 each phase entered, per-sub-question progress, retries/backoffs taken, sources kept vs
 filtered, claims verified, budget usage, and a one-line **run summary** at the end (LLM
 calls, searches, wall-clock time, sub-questions succeeded vs skipped, grounding %).
+
+## Phase 5: trustworthy verifier extraction + evaluation harness
+
+**The problem.** The grounding percentage was inconsistent and sometimes meaningless.
+The root cause was the claim-**extraction** step, not the support check: the verifier
+sometimes invented strawman claims (assertions the report never made) and marked them
+unsupported, dragging the percentage down for no real reason. A grounding number is only
+trustworthy if the claims being checked are claims the report actually makes.
+
+**The fix (`verify.py`).**
+- *Strict extraction prompt.* Extraction is now an explicit, emphatic first step:
+  extract ONLY the report's own assertions, faithfully paraphrased, each a single
+  checkable statement, at a consistent granularity (named techniques/numbers/entities,
+  not just summary sentences) — never invent, generalize, negate, or combine. The
+  support check against retrieved source text is unchanged.
+- *Fabrication instrument.* Because a prompt alone can't be trusted, each extracted claim
+  is also tested for whether it genuinely appears in the report, via a deterministic
+  word-overlap heuristic (`claim_in_report`) — no extra LLM call. `VerificationReport`
+  exposes `fabricated` (claims not in the report). A faithful paraphrase shares most of
+  its content words with the report; a strawman shares few. It is a proxy, not a perfect
+  entailment check, but it makes fabrication countable instead of silently skewing the
+  metric.
+
+**What the eval measures (and doesn't).** `eval/run_eval.py` runs the full agent over a
+fixed benchmark of AI/RAG/hallucination questions and records, per question: grounding %,
+claim counts (total/supported/fabricated), sub-questions succeeded vs skipped, LLM/search
+calls, and elapsed time, with aggregate means. It deliberately has **no gold answers**:
+it measures **grounding and process quality** (are the report's claims supported by the
+sources, how did the pipeline behave) — NOT the factual correctness of the answers, which
+would need curated ground truth. The benchmark stays in the tested domain so searches
+return real sources.
+
+**Before/after comparison.** Rather than delete the old prompt, it is kept behind
+`VERIFIER_MODE=old|new` (read from the environment by `config.verifier_mode()`), so the
+eval can run once in each mode and `eval/compare.py` prints mean grounding before vs
+after plus the fabricated-claim counts each mode produced. This turns "the metric feels
+untrustworthy" into a measured before/after — the strict prompt should show higher, more
+stable grounding and far fewer fabricated claims.
+
+**Free-tier discipline.** The runner is sequential, reuses the existing retry/backoff,
+and pauses `--delay` seconds between questions so a full run doesn't trip Groq's
+per-minute cap; `--limit N` runs a small subset first.

@@ -53,6 +53,15 @@ RETRY_BASE_DELAY = 1.0         # seconds; doubled each attempt
 RETRY_MAX_DELAY = 30.0         # cap on a single backoff sleep
 
 
+# --- Verifier mode ---------------------------------------------------------------
+# Selects the verifier's claim-extraction prompt. "new" (default) is the strict Phase 5
+# extraction; "old" keeps the original prompt available for before/after comparison.
+# Read from the VERIFIER_MODE environment variable so the eval harness can toggle it.
+def verifier_mode() -> str:
+    """Return the active verifier mode ("new" or "old") from the environment."""
+    return os.getenv("VERIFIER_MODE", "new").strip().lower()
+
+
 class MissingAPIKey(RuntimeError):
     """Raised when a required API key is absent from the environment."""
 
