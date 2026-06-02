@@ -9,9 +9,13 @@ a clear failure, so the agent never proceeds on garbage.
 
 from __future__ import annotations
 
+import logging
+
 from groq import Groq
 
 from . import config, llm
+
+logger = logging.getLogger(__name__)
 
 # A real plan has at least this many sub-questions; fewer means the reply was a parsing
 # artifact (e.g. a lone wrapper-key string), not a usable plan.
@@ -66,7 +70,7 @@ def make_plan(client: Groq, question: str) -> list[str]:
         'as JSON. A bare array is fine, or an object like {"sub_questions": [...]}.'
     )
 
-    for _ in range(_MAX_ATTEMPTS):
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
             data = llm.complete_json(
                 client,
@@ -76,12 +80,17 @@ def make_plan(client: Groq, question: str) -> list[str]:
                 max_tokens=1024,
             )
         except ValueError:
+            logger.warning("Planner returned unparseable JSON (attempt %d/%d)", attempt, _MAX_ATTEMPTS)
             continue  # unparseable JSON — retry
 
         subquestions = _parse_subquestions(data)
         if _is_valid_plan(subquestions):
             # Defensively enforce the cap in case the model overshoots.
             return subquestions[: config.MAX_SUBQUESTIONS]
+        logger.warning(
+            "Planner produced an invalid plan (attempt %d/%d): %r",
+            attempt, _MAX_ATTEMPTS, subquestions,
+        )
 
     raise PlanningError(
         "The planner did not return a usable set of sub-questions "

@@ -13,10 +13,15 @@ the result as a defensive backstop.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 from groq import Groq
+
+from .retries import call_with_retries
+
+logger = logging.getLogger(__name__)
 
 
 def complete_text(
@@ -64,7 +69,12 @@ def _generate(
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
 
-    response = client.chat.completions.create(**kwargs)
+    # Transient API failures (503/429/timeouts) are retried with backoff by the shared
+    # retry layer; permanent errors (400/401) fail fast.
+    response = call_with_retries(
+        lambda: client.chat.completions.create(**kwargs),
+        description=f"Groq chat completion ({model})",
+    )
     # content can be None if the model returns nothing; normalise to "" so callers can
     # degrade gracefully instead of hitting None.
     return (response.choices[0].message.content or "").strip()

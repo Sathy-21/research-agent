@@ -7,12 +7,16 @@ agent keeps going instead of crashing on a single bad page.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import trafilatura
 from tavily import TavilyClient
 
 from . import config
+from .retries import call_with_retries
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -27,14 +31,17 @@ class Source:
 def search_hits(tavily: TavilyClient, query: str) -> list[dict]:
     """Run one web search and return the top result hits (each a dict with url/title).
 
-    Returns an empty list on failure so a sub-question with no results degrades
-    gracefully rather than raising.
+    The search call is retried on transient failures by the shared retry layer. A
+    permanent error or an exhausted retry propagates, so the caller can skip the
+    sub-question; an empty result set (no hits) is returned normally.
     """
-    try:
-        response = tavily.search(query=query, max_results=config.RESULTS_PER_SUBQUESTION)
-    except Exception:
-        return []
-    return response.get("results", [])
+    response = call_with_retries(
+        lambda: tavily.search(query=query, max_results=config.RESULTS_PER_SUBQUESTION),
+        description=f"Tavily search ({query!r})",
+    )
+    hits = response.get("results", [])
+    logger.debug("Search for %r returned %d hit(s)", query, len(hits))
+    return hits
 
 
 def fetch_source(hit: dict) -> Source | None:
@@ -64,9 +71,13 @@ def fetch_source(hit: dict) -> Source | None:
 
 def gather_sources(tavily: TavilyClient, query: str) -> list[Source]:
     """Search for `query`, then fetch + extract each top hit, skipping failures."""
+    hits = search_hits(tavily, query)
     sources: list[Source] = []
-    for hit in search_hits(tavily, query):
+    for hit in hits:
         source = fetch_source(hit)
         if source is not None:
             sources.append(source)
+    skipped = len(hits) - len(sources)
+    if skipped:
+        logger.debug("%d of %d page(s) could not be fetched/extracted", skipped, len(hits))
     return sources

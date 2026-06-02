@@ -112,3 +112,46 @@ assuming one provider's convention:
   wrapper-key token), retries once on an invalid/garbage plan, and otherwise raises a
   clear `PlanningError` instead of proceeding — so a bad plan can never silently poison
   the rest of the run.
+
+## Phase 4: robustness, guardrails, and observability
+
+**Retry strategy (`retries.py`).** A live run crashed on a transient API blip, discarding
+work already done. All LLM and web-search calls now route through one shared
+`call_with_retries` helper (no copy-paste), giving application-level resilience on top of
+the SDKs' own handling.
+
+- *Retryable (transient):* HTTP 429 (rate limit), 408/425, and 5xx (500/502/503/504),
+  plus timeouts and connection errors. These are server-side or load-related and usually
+  succeed on a retry — exactly the class that shouldn't throw away completed work.
+- *Not retried (permanent):* 400 (bad request), 401/403 (auth/bad key), 404, 409, 422.
+  Retrying these only burns time and quota because the request itself is wrong; they fail
+  fast with a clear logged message.
+- *Backoff:* capped exponential (1s, 2s, 4s … up to `RETRY_MAX_DELAY`) with up to 25%
+  jitter, limited to `RETRY_MAX_ATTEMPTS` total attempts. If the error carries a server
+  hint (`Retry-After` header or a `retry_after` attribute — Groq and Gemini both provide
+  one), that delay is honoured instead of the computed backoff.
+- *Classification is by duck-typing* (status code + exception class-name hints) rather
+  than importing each SDK's exception types, so the layer stays provider-agnostic — the
+  same reason the provider swaps were cheap.
+
+**Partial-failure policy.** A single bad sub-question must not sink the whole run. Each
+sub-question's search → relevance → synthesis runs in a try/except; if it fails after
+retries (or finds no relevant sources), it is recorded in a `skipped` list with a reason
+and the loop continues. The report is composed from whatever succeeded and ends with a
+"Coverage note" naming the dropped sub-questions, so the output is honest about gaps.
+The run is fatal only when planning fails outright (`PlanningError`) or zero sub-questions
+succeed (`NoResultsError`) — there is genuinely nothing to report in those cases.
+
+**Time guardrail.** A wall-clock deadline (`MAX_RUN_SECONDS`) is checked cooperatively
+between sub-questions rather than via signals/threads — this is portable (notably on
+Windows, which lacks `SIGALRM`) and can't leave orphaned threads. On timeout the loop
+stops, the remaining sub-questions are marked skipped, and whatever finished is still
+composed and flagged as cut short. (Bounded retry sleeps and the SDK's own per-call
+timeouts keep any single call from hanging indefinitely.)
+
+**Logging approach.** Diagnostics use the standard `logging` module, emitted to **stderr**
+so the user-facing report on **stdout** stays clean and machine-pipeable. Level is
+controlled by `--verbose` (DEBUG) or the `LOG_LEVEL` env var (default INFO). Logged:
+each phase entered, per-sub-question progress, retries/backoffs taken, sources kept vs
+filtered, claims verified, budget usage, and a one-line **run summary** at the end (LLM
+calls, searches, wall-clock time, sub-questions succeeded vs skipped, grounding %).
