@@ -5,11 +5,11 @@ on *what* to ask rather than the mechanics of calling the model and parsing repl
 The two public helpers keep the same signatures regardless of provider, so swapping
 the LLM (as we did from Anthropic to Gemini) touches only this file plus config.
 
-Thinking is disabled on every call. Gemini 2.5 Flash is a "thinking" model by
+Thinking is disabled on every call. Gemini 2.5 Flash-Lite is a "thinking" model by
 default, and thinking tokens are drawn from `max_output_tokens` — with a small budget
 (e.g. the planner's) the model can spend the whole budget thinking and return no text.
 Disabling it makes the token budget go entirely to the answer: predictable, faster,
-and cheaper. (thinking_budget=0 is supported on Flash; it is not on Gemini 2.5 Pro.)
+and cheaper. (thinking_budget=0 is supported on Flash-Lite; it is not on Gemini 2.5 Pro.)
 """
 
 from __future__ import annotations

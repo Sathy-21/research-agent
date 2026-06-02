@@ -13,16 +13,16 @@ from dotenv import load_dotenv
 
 # --- Model choices ---------------------------------------------------------------
 # We use Gemini's free tier (Google AI Studio) so the project costs nothing to run.
-# We use the Flash model for every step rather than splitting in a stronger model for
-# compose. The sensible stronger free-tier model would be Gemini 2.5 Pro, but on the
-# free tier Pro has very low rate limits that a multi-call research run can exhaust,
-# and (unlike Flash) it cannot disable "thinking", which makes token budgeting less
-# predictable. Flash everywhere keeps runs free, fast, and within rate limits. The
+# We use the Flash-Lite model for every step rather than splitting in a stronger model
+# for compose. The sensible stronger free-tier model would be Gemini 2.5 Pro, but on
+# the free tier Pro has very low rate limits that a multi-call research run can exhaust,
+# and (unlike Flash-Lite) it cannot disable "thinking", which makes token budgeting less
+# predictable. Flash-Lite everywhere keeps runs free, fast, and within rate limits. The
 # three constants are kept separate so a stronger compose model can be dropped in
 # later without touching the rest of the code.
-PLANNER_MODEL = "gemini-2.5-flash"
-SYNTHESIS_MODEL = "gemini-2.5-flash"
-COMPOSE_MODEL = "gemini-2.5-flash"
+PLANNER_MODEL = "gemini-2.5-flash-lite"
+SYNTHESIS_MODEL = "gemini-2.5-flash-lite"
+COMPOSE_MODEL = "gemini-2.5-flash-lite"
 
 # --- Pipeline knobs --------------------------------------------------------------
 MIN_SUBQUESTIONS = 3

@@ -15,7 +15,7 @@ It then prints the original question, the generated sub-questions, the final rep
 ## Stack
 
 - **Python** — organized as a small package (`research_agent/`) with separate modules per concern.
-- **Google Gemini API** (free tier via Google AI Studio) — every step runs on `gemini-2.5-flash`, so the project costs nothing to run. See [DECISIONS.md](DECISIONS.md) for why Flash everywhere rather than a model split.
+- **Google Gemini API** (free tier via Google AI Studio) — every step runs on `gemini-2.5-flash-lite`, so the project costs nothing to run. See [DECISIONS.md](DECISIONS.md) for why Flash-Lite everywhere rather than a model split.
 - **Tavily** — web search.
 - **trafilatura** — readable-text extraction from fetched pages.
 - **python-dotenv** — loads API keys from a local `.env` file.
