@@ -56,7 +56,8 @@ def filter_sources(
             user=user,
             max_tokens=512,
         )
-        ids = data.get("relevant_ids", [])
+        # Tolerate either a bare array of ids or an object wrapping them under a key.
+        ids = llm.extract_list(data)
         return [
             sources[i - 1]
             for i in ids

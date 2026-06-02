@@ -89,3 +89,26 @@ payoff of keeping the provider behind a thin seam.
 
 **Unchanged:** the graceful-failure handling, the relevance filter, the verifier, and
 the `Budget` cap all carry over without change — they are provider-independent.
+
+## JSON output *shape* was an implicit coupling that broke under Groq
+
+The provider swap was clean at the function-signature level (`llm.py`'s two helpers were
+untouched by callers), but it surfaced a subtler coupling: the **shape** of the JSON the
+model returns. Gemini happily returned a bare array for the planner, so the planner
+iterated the parsed value directly. Groq's JSON mode only returns a top-level **object**,
+so the reply came back as `{"sub_questions": [...]}` — and iterating that object yielded
+its *keys*, producing a single bogus sub-question equal to the literal string
+`"sub_questions"`.
+
+The lesson: keeping the provider behind a thin interface isolates the *call mechanics*
+but not the *data contract*. The fix makes parsing defensive about shape rather than
+assuming one provider's convention:
+
+- Added `llm.extract_list`, which returns the list whether the reply is a bare array or
+  an object wrapping the array under a key (the first list-valued field). All
+  list-expecting callers (planner, relevance, verify) use it; synthesis, which genuinely
+  expects an object, now explicitly requires a dict.
+- The planner validates the result (non-empty, at least 2 sub-questions, not a lone
+  wrapper-key token), retries once on an invalid/garbage plan, and otherwise raises a
+  clear `PlanningError` instead of proceeding — so a bad plan can never silently poison
+  the rest of the run.

@@ -91,8 +91,12 @@ def verify_report(
             user=user,
             max_tokens=4000,
         )
+        # Tolerate either a bare array of claim objects or an object wrapping them
+        # under a key (e.g. {"claims": [...]}).
         checks: list[ClaimCheck] = []
-        for item in data.get("claims", []) or []:
+        for item in llm.extract_list(data):
+            if not isinstance(item, dict):
+                continue
             claim = str(item.get("claim", "")).strip()
             if claim:
                 checks.append(ClaimCheck(claim=claim, supported=bool(item.get("supported"))))

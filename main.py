@@ -11,6 +11,7 @@ import sys
 
 from research_agent import config, verify
 from research_agent.agent import run_research
+from research_agent.planner import PlanningError
 
 
 def main() -> int:
@@ -25,6 +26,9 @@ def main() -> int:
         result = run_research(question)
     except config.MissingAPIKey as error:
         print(f"Configuration error: {error}")
+        return 1
+    except PlanningError as error:
+        print(f"Planning failed: {error}")
         return 1
 
     separator = "=" * 70

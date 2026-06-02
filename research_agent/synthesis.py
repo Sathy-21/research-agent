@@ -67,6 +67,10 @@ def answer_subquestion(
             user=user,
             max_tokens=1024,
         )
+        # This step genuinely expects an object ({"answer": ..., "sources_used": [...]}),
+        # so require a dict; anything else is treated as a parse failure below.
+        if not isinstance(data, dict):
+            raise ValueError("synthesis reply was not a JSON object")
         answer = str(data.get("answer", "")).strip()
         numbers = data.get("sources_used", []) or []
         used = [

@@ -70,6 +70,29 @@ def _generate(
     return (response.choices[0].message.content or "").strip()
 
 
+def extract_list(data: Any) -> list:
+    """Pull a list out of a parsed JSON value, tolerating two shapes.
+
+    Different providers' JSON modes return different shapes: a bare array (`[...]`), or
+    — as with Groq's object-only JSON mode — an object that wraps the array under a key
+    (e.g. `{"sub_questions": [...]}`). This returns:
+      * `data` itself if it is already a list;
+      * the first list-valued field if `data` is an object containing one (covering the
+        common single-wrapper-key case);
+      * `[]` otherwise.
+
+    Using this instead of iterating `data` directly avoids the classic bug where
+    iterating a dict yields its *keys* rather than the wrapped list.
+    """
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for value in data.values():
+            if isinstance(value, list):
+                return value
+    return []
+
+
 def _parse_json(raw: str) -> Any:
     """Parse JSON from a model reply, tolerating prose or markdown fences around it."""
     try:

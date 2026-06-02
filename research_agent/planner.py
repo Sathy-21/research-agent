@@ -1,8 +1,10 @@
 """Planning (Phase 2): decompose one research question into focused sub-questions.
 
 A single LLM call turns the original question into 3-6 specific, non-overlapping
-sub-questions, each answerable with one web search. If planning fails for any reason,
-we fall back to researching the original question directly, so a run never dead-ends.
+sub-questions, each answerable with one web search. The reply is parsed defensively:
+the list of sub-questions is extracted whether the model returns a bare JSON array or
+an object that wraps the array under a key. An invalid plan triggers one retry and then
+a clear failure, so the agent never proceeds on garbage.
 """
 
 from __future__ import annotations
@@ -10,6 +12,11 @@ from __future__ import annotations
 from groq import Groq
 
 from . import config, llm
+
+# A real plan has at least this many sub-questions; fewer means the reply was a parsing
+# artifact (e.g. a lone wrapper-key string), not a usable plan.
+_MIN_VALID_SUBQUESTIONS = 2
+_MAX_ATTEMPTS = 2  # one initial attempt plus one retry
 
 _PLANNER_SYSTEM = (
     "You are a research planner. Given a single research question, break it into "
@@ -19,31 +26,64 @@ _PLANNER_SYSTEM = (
 )
 
 
-def make_plan(client: Groq, question: str) -> list[str]:
-    """Decompose `question` into a list of sub-questions (one LLM call).
+class PlanningError(RuntimeError):
+    """Raised when the planner cannot produce a usable set of sub-questions."""
 
-    Falls back to `[question]` if the model returns nothing usable.
+
+def _looks_like_key_name(text: str) -> bool:
+    """True if `text` looks like a JSON wrapper key rather than a question.
+
+    A genuine sub-question is a sentence containing spaces; a bare token such as
+    "sub_questions" is almost certainly the object key leaking through, not content.
+    """
+    return " " not in text
+
+
+def _parse_subquestions(data: object) -> list[str]:
+    """Extract clean sub-question strings from a parsed JSON reply (any list shape)."""
+    items = llm.extract_list(data)
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
+def _is_valid_plan(subquestions: list[str]) -> bool:
+    """Reject empties, too-short plans, and lone wrapper-key artifacts."""
+    if len(subquestions) < _MIN_VALID_SUBQUESTIONS:
+        return False
+    if len(subquestions) == 1 and _looks_like_key_name(subquestions[0]):
+        return False
+    return True
+
+
+def make_plan(client: Groq, question: str) -> list[str]:
+    """Decompose `question` into a list of sub-questions.
+
+    Tries up to twice (one retry). Raises PlanningError if no usable plan comes back,
+    rather than proceeding with garbage.
     """
     user = (
         f"Research question:\n{question}\n\n"
-        f"Return a JSON array of {config.MIN_SUBQUESTIONS}-{config.MAX_SUBQUESTIONS} "
-        "sub-question strings, and nothing else."
+        f"Return {config.MIN_SUBQUESTIONS}-{config.MAX_SUBQUESTIONS} sub-question strings "
+        'as JSON. A bare array is fine, or an object like {"sub_questions": [...]}.'
     )
 
-    try:
-        data = llm.complete_json(
-            client,
-            model=config.PLANNER_MODEL,
-            system=_PLANNER_SYSTEM,
-            user=user,
-            max_tokens=1024,
-        )
-        subquestions = [str(item).strip() for item in data if str(item).strip()]
-    except (ValueError, TypeError):
-        # Malformed JSON, or a non-iterable response — fall back below.
-        subquestions = []
+    for _ in range(_MAX_ATTEMPTS):
+        try:
+            data = llm.complete_json(
+                client,
+                model=config.PLANNER_MODEL,
+                system=_PLANNER_SYSTEM,
+                user=user,
+                max_tokens=1024,
+            )
+        except ValueError:
+            continue  # unparseable JSON — retry
 
-    if not subquestions:
-        return [question]
-    # Defensively enforce the cap in case the model overshoots.
-    return subquestions[: config.MAX_SUBQUESTIONS]
+        subquestions = _parse_subquestions(data)
+        if _is_valid_plan(subquestions):
+            # Defensively enforce the cap in case the model overshoots.
+            return subquestions[: config.MAX_SUBQUESTIONS]
+
+    raise PlanningError(
+        "The planner did not return a usable set of sub-questions "
+        f"(need at least {_MIN_VALID_SUBQUESTIONS}). Please try rerunning."
+    )
