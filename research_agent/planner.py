@@ -93,6 +93,6 @@ def make_plan(client: Groq, question: str) -> list[str]:
         )
 
     raise PlanningError(
-        "The planner did not return a usable set of sub-questions "
-        f"(need at least {_MIN_VALID_SUBQUESTIONS}). Please try rerunning."
+        "Couldn't generate sub-questions. This can happen with a temporary model issue "
+        "(rerunning may help) or if the input isn't a researchable question."
     )
