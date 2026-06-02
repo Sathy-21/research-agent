@@ -57,25 +57,36 @@ python main.py
 
 ## Architecture
 
-The flow is **plan → per-sub-question pipeline → compose**, orchestrated by `research_agent/agent.py`. Read `run_research` top to bottom to follow the entire control flow.
+The flow is **plan → per-sub-question pipeline → compose → verify**, orchestrated by `research_agent/agent.py`. Read `run_research` top to bottom to follow the entire control flow.
 
 ```
 question
    │
    ▼
-[ planner.make_plan ]  ── LLM ──▶  3–6 sub-questions        (Phase 2)
+[ planner.make_plan ]  ── LLM ──▶  3–6 sub-questions          (Phase 2)
    │
-   ▼  for each sub-question:                                (Phase 1 pipeline)
-   ├─ retrieval.gather_sources  ── Tavily search ──▶ top 3 URLs
-   │                            ── trafilatura ────▶ extracted text (bad pages skipped)
-   └─ synthesis.answer_subquestion  ── LLM ──▶ grounded answer + the URLs it used
+   ▼  for each sub-question:                                  (per-sub-question pipeline)
+   ├─ retrieval.gather_sources    ── Tavily search ──▶ top 3 URLs
+   │                              ── trafilatura ────▶ extracted text (bad pages skipped)
+   ├─ relevance.filter_sources    ── LLM (1 batched) ──▶ keep only on-topic sources  (Phase 3A)
+   │                                 └─ if none relevant, skip this sub-question
+   └─ synthesis.answer_subquestion ── LLM ──▶ grounded answer + the sources it used
    │
    ▼
-[ compose.compose_report ]  ── LLM ──▶  final report
-   │                          + deduped, numbered source list (built in code)
+[ compose.compose_report ]  ── LLM ──▶  narrative report body
+   │
    ▼
-ResearchResult  ──▶  printed by main.py
+[ verify.verify_report ]  ── LLM (1 batched) ──▶ per-claim supported/unsupported   (Phase 3B)
+   │   ├─ flag_unsupported: append a clearly marked "Unverified claims" section
+   │   └─ grounding_summary: total / supported / percent grounded
+   ▼
+report body + deduped numbered source list (built in code)
+   │
+   ▼
+ResearchResult  ──▶  printed by main.py (question, sub-questions, report, grounding summary)
 ```
+
+Source **text** (not just URLs) is threaded from `retrieval` through `synthesis` (each `AnsweredSubquestion` keeps the `Source` objects it used) into `verify`, so claims are checked against the same text the report was built from.
 
 ### Modules
 
@@ -84,11 +95,13 @@ ResearchResult  ──▶  printed by main.py
 | `config.py` | Loads/validates API keys from `.env`; defines model choices and run limits. |
 | `llm.py` | Thin helpers around the Gemini API (plain-text and JSON replies). |
 | `planner.py` | Phase 2 — decomposes the question into sub-questions. |
-| `retrieval.py` | Phase 1 — web search (Tavily) + readable-text extraction (trafilatura). |
-| `synthesis.py` | Phase 1 — writes a grounded answer to one sub-question and tracks its sources. |
-| `compose.py` | Merges sub-answers into the final report and appends the unique source list. |
+| `retrieval.py` | Web search (Tavily) + readable-text extraction (trafilatura). |
+| `relevance.py` | Phase 3A — one batched LLM call per sub-question to drop off-topic sources before synthesis. |
+| `synthesis.py` | Writes a grounded answer to one sub-question and tracks its sources. |
+| `compose.py` | Writes the narrative report body; provides the deduped source-list helpers. |
+| `verify.py` | Phase 3B — checks the report's claims against the source text, flags unsupported ones, and reports a grounding metric. |
 | `agent.py` | Orchestrates the whole flow and enforces the cost budget. |
-| `main.py` | CLI entry point; prints the question, sub-questions, report, and sources. |
+| `main.py` | CLI entry point; prints the question, sub-questions, report, and grounding summary. |
 
 ### Cost & robustness guardrails
 

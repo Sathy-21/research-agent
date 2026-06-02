@@ -1,8 +1,9 @@
-"""Composition: merge the sub-answers into one report and append a source list.
+"""Composition: merge the sub-answers into one report, plus source-list helpers.
 
-The narrative report is written by the stronger compose model from the collected
-sub-answers. The numbered source list is built deterministically in code (deduped,
-order-preserving) rather than asked of the model, so it is always accurate.
+`compose_report` writes only the narrative body. The numbered source list is built
+separately (`format_source_list`) and `unique_sources` is exposed so the verifier can
+reach the underlying source text. Keeping the narrative separate from the source list
+lets claim verification run on the prose alone, before the source list is attached.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ _COMPOSE_SYSTEM = (
 )
 
 
-def _unique_sources(answered: list[AnsweredSubquestion]) -> list[Source]:
+def unique_sources(answered: list[AnsweredSubquestion]) -> list[Source]:
     """Collect the unique sources used across all sub-answers, preserving order."""
     seen: set[str] = set()
     ordered: list[Source] = []
@@ -37,7 +38,14 @@ def _unique_sources(answered: list[AnsweredSubquestion]) -> list[Source]:
 def compose_report(
     client: genai.Client, question: str, answered: list[AnsweredSubquestion]
 ) -> str:
-    """Compose the final report (one LLM call) and append a numbered source list."""
+    """Compose the narrative report body from the sub-answers (one LLM call).
+
+    Returns a plain message without calling the model if there are no sub-answers
+    (e.g. every sub-question was skipped for lack of relevant sources).
+    """
+    if not answered:
+        return "No sufficiently relevant sources were found to answer this question."
+
     findings = "\n\n".join(
         f"Sub-question: {item.subquestion}\nFindings: {item.answer}"
         for item in answered
@@ -47,7 +55,7 @@ def compose_report(
         f"Findings from research:\n\n{findings}"
     )
 
-    body = llm.complete_text(
+    return llm.complete_text(
         client,
         model=config.COMPOSE_MODEL,
         system=_COMPOSE_SYSTEM,
@@ -55,12 +63,13 @@ def compose_report(
         max_tokens=4000,
     )
 
-    sources = _unique_sources(answered)
-    if not sources:
-        return body
 
-    source_lines = "\n".join(
+def format_source_list(sources: list[Source]) -> str:
+    """Render a deduped, numbered source list. Empty string if there are none."""
+    if not sources:
+        return ""
+    lines = "\n".join(
         f"{i}. {source.title} — {source.url}"
         for i, source in enumerate(sources, start=1)
     )
-    return f"{body}\n\nSources\n-------\n{source_lines}"
+    return f"Sources\n-------\n{lines}"

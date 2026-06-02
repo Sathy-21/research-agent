@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 
-from research_agent import config
+from research_agent import config, verify
 from research_agent.agent import run_research
 
 
@@ -43,6 +43,11 @@ def main() -> int:
     print("FINAL REPORT")
     print(separator)
     print(result.report)
+
+    print("\n" + separator)
+    print("GROUNDING")
+    print(separator)
+    print(verify.grounding_summary(result.verification))
     return 0
 
 

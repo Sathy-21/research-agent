@@ -31,3 +31,39 @@ to the answer.
 **Unchanged:** The graceful-failure behaviour (skip dead sources / empty searches /
 malformed JSON, fail fast on a missing key) and the per-run cost cap (`Budget` in
 `agent.py`) are provider-independent and still apply.
+
+## Phase 3: grounding via relevance filtering + claim verification
+
+Added two steps to stop the agent trusting and repeating bad sources. Each addresses a
+specific failure seen in a real test run.
+
+**Relevance filtering — `relevance.py` (before synthesis).**
+*Failure it defends against:* a sub-question's search pulled in off-topic sources
+(vision/multimodal papers for a question about text-retrieval systems), and the
+synthesizer summarized them anyway because nothing checked relevance. Now, for each
+sub-question, one batched LLM call judges which gathered sources are actually relevant
+and drops the rest *before* synthesis, so the answer is built only from on-topic text.
+It is one call per sub-question (snippets of all sources in a single prompt), not one
+call per source, to stay call-efficient on the rate-limited free tier. If filtering
+removes every source, the sub-question is skipped rather than synthesized from nothing.
+
+**Claim verification — `verify.py` (after compose).**
+*Failure it defends against:* a low-quality, off-topic source (a generic library
+fact-checking guide) was retrieved, trusted, and woven into a technical report. Now,
+after the report is composed, one batched LLM call extracts the report's factual claims
+and checks each against the actual retrieved source text, marking it supported or
+unsupported. This required threading the source **text** (not just URLs) through to the
+verifier: each `AnsweredSubquestion` carries the `Source` objects it used, and
+`agent.py` passes the deduped set into `verify_report`.
+
+*Flag vs. delete:* unsupported claims are **flagged** in an appended "Unverified claims"
+section rather than deleted. Surgically removing sentences from finished prose would
+need a second LLM rewrite call (cost on a rate-limited tier) and risks mangling the
+text; flagging keeps the report intact and is transparent about what couldn't be
+grounded. A one-line **grounding summary** (total claims / supported / percent grounded)
+is printed after the report as a metric to build on in Phase 5.
+
+**Budget impact:** new calls are counted in `Budget`. Worst case (6 sub-questions) is
+now 1 plan + 6×(1 relevance + 1 synthesis) + 1 compose + 1 verification = 15 LLM calls,
+so `MAX_LLM_CALLS` was raised from 12 to 16. Verification is kept to a single batched
+call (all claims at once), not one call per claim.
