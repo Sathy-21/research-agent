@@ -1,0 +1,12 @@
+[
+  {"id": "q01", "question": "What techniques reduce hallucination in large language models?"},
+  {"id": "q02", "question": "How does retrieval-augmented generation (RAG) work, and what are its main components?"},
+  {"id": "q03", "question": "What are common strategies for chunking documents in a RAG pipeline?"},
+  {"id": "q04", "question": "How is retrieval quality evaluated in RAG systems?"},
+  {"id": "q05", "question": "What is the role of reranking in retrieval-augmented generation?"},
+  {"id": "q06", "question": "What are vector databases and how are they used for semantic search?"},
+  {"id": "q07", "question": "How do embedding models represent text for retrieval?"},
+  {"id": "q08", "question": "What are the main causes of hallucinations in large language models?"},
+  {"id": "q09", "question": "What does 'grounding' mean for LLM-generated answers, and how is it measured?"},
+  {"id": "q10", "question": "How does fine-tuning differ from retrieval augmentation for adding knowledge to an LLM?"}
+]
