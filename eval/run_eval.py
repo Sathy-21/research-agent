@@ -135,6 +135,9 @@ def main() -> int:
                         help="run only the first N questions (for a quick smoke test)")
     parser.add_argument("--delay", type=float, default=5.0,
                         help="seconds to wait between questions (free-tier rate-limit guard)")
+    parser.add_argument("--mode", choices=["old", "new"], default=None,
+                        help="verifier mode for this run (overrides VERIFIER_MODE env; "
+                             "defaults to the env var, or 'new')")
     parser.add_argument("--verbose", action="store_true", help="enable DEBUG logging")
     args = parser.parse_args()
 
@@ -144,7 +147,10 @@ def main() -> int:
         stream=sys.stderr,
     )
 
-    verifier_mode = os.getenv("VERIFIER_MODE", "new")
+    # --mode wins if passed; otherwise fall back to the env var (default "new").
+    verifier_mode = (args.mode or os.getenv("VERIFIER_MODE", "new")).strip().lower()
+    # Export it so the agent's verifier (config.verifier_mode()) picks up this run's mode.
+    os.environ["VERIFIER_MODE"] = verifier_mode
     questions = load_questions(args.limit)
     logger.info("Running %d question(s), verifier_mode=%s, delay=%.0fs",
                 len(questions), verifier_mode, args.delay)
