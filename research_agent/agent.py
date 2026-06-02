@@ -1,9 +1,14 @@
 """Agent orchestration.
 
-This module is the readable control-flow heart of the project. For now it runs the
-linear Phase 1 pipeline on the question directly: search + extract sources, synthesize
-a grounded answer, then compose a report. (Planning and a per-sub-question loop are
-added in Phase 2.)
+This module is the readable control-flow heart of the project. `run_research` reads
+top to bottom as the whole agent:
+
+    1. Plan    — decompose the question into sub-questions (Phase 2).
+    2. Loop    — for each sub-question, run the Phase 1 pipeline:
+                 search -> fetch + extract sources -> grounded synthesis.
+    3. Compose — merge the sub-answers into one final report.
+
+A `Budget` caps total searches and LLM calls so a run can't spiral in cost.
 """
 
 from __future__ import annotations
@@ -13,7 +18,7 @@ from dataclasses import dataclass
 import anthropic
 from tavily import TavilyClient
 
-from . import compose, config, retrieval, synthesis
+from . import compose, config, planner, retrieval, synthesis
 from .synthesis import AnsweredSubquestion
 
 
@@ -48,26 +53,36 @@ class ResearchResult:
 
 
 def run_research(question: str) -> ResearchResult:
-    """Run the research pipeline for a single question and return the result."""
+    """Run the full research pipeline for a question and return the result."""
     settings = config.load_settings()
     anthropic_client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
     tavily_client = TavilyClient(api_key=settings.tavily_api_key)
     budget = Budget()
 
-    # --- Per-question pipeline (Phase 1) ---
-    sources = retrieval.gather_sources(tavily_client, question)
-    budget.searches += 1
-    answer = synthesis.answer_subquestion(anthropic_client, question, sources)
+    # --- 1. Plan: decompose the question into sub-questions (Phase 2) ---
+    subquestions = planner.make_plan(anthropic_client, question)
     budget.llm_calls += 1
-    answered = [answer]
 
-    # --- Compose the final report ---
+    # --- 2. Loop: run the Phase 1 pipeline for each sub-question ---
+    answered: list[AnsweredSubquestion] = []
+    for subquestion in subquestions:
+        # Each iteration needs one search and one LLM call; stop launching new work
+        # if either budget is exhausted and compose with what we have so far.
+        if not budget.can_search() or not budget.can_call_llm():
+            break
+        sources = retrieval.gather_sources(tavily_client, subquestion)
+        budget.searches += 1
+        answer = synthesis.answer_subquestion(anthropic_client, subquestion, sources)
+        budget.llm_calls += 1
+        answered.append(answer)
+
+    # --- 3. Compose: merge the sub-answers into one final report ---
     report = compose.compose_report(anthropic_client, question, answered)
     budget.llm_calls += 1
 
     return ResearchResult(
         question=question,
-        subquestions=[question],
+        subquestions=subquestions,
         answered=answered,
         report=report,
     )
