@@ -1,0 +1,73 @@
+"""Agent orchestration.
+
+This module is the readable control-flow heart of the project. For now it runs the
+linear Phase 1 pipeline on the question directly: search + extract sources, synthesize
+a grounded answer, then compose a report. (Planning and a per-sub-question loop are
+added in Phase 2.)
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import anthropic
+from tavily import TavilyClient
+
+from . import compose, config, retrieval, synthesis
+from .synthesis import AnsweredSubquestion
+
+
+@dataclass
+class Budget:
+    """Hard caps so a single run can't spiral in cost.
+
+    The orchestrator records each search and LLM call here and checks the budget
+    before launching new work.
+    """
+
+    max_searches: int = config.MAX_SEARCHES
+    max_llm_calls: int = config.MAX_LLM_CALLS
+    searches: int = 0
+    llm_calls: int = 0
+
+    def can_search(self) -> bool:
+        return self.searches < self.max_searches
+
+    def can_call_llm(self) -> bool:
+        return self.llm_calls < self.max_llm_calls
+
+
+@dataclass
+class ResearchResult:
+    """Everything a caller needs to display the outcome of a run."""
+
+    question: str
+    subquestions: list[str]
+    answered: list[AnsweredSubquestion]
+    report: str
+
+
+def run_research(question: str) -> ResearchResult:
+    """Run the research pipeline for a single question and return the result."""
+    settings = config.load_settings()
+    anthropic_client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    tavily_client = TavilyClient(api_key=settings.tavily_api_key)
+    budget = Budget()
+
+    # --- Per-question pipeline (Phase 1) ---
+    sources = retrieval.gather_sources(tavily_client, question)
+    budget.searches += 1
+    answer = synthesis.answer_subquestion(anthropic_client, question, sources)
+    budget.llm_calls += 1
+    answered = [answer]
+
+    # --- Compose the final report ---
+    report = compose.compose_report(anthropic_client, question, answered)
+    budget.llm_calls += 1
+
+    return ResearchResult(
+        question=question,
+        subquestions=[question],
+        answered=answered,
+        report=report,
+    )
