@@ -8,7 +8,7 @@ lets claim verification run on the prose alone, before the source list is attach
 
 from __future__ import annotations
 
-from google import genai
+from groq import Groq
 
 from . import config, llm
 from .retrieval import Source
@@ -36,7 +36,7 @@ def unique_sources(answered: list[AnsweredSubquestion]) -> list[Source]:
 
 
 def compose_report(
-    client: genai.Client, question: str, answered: list[AnsweredSubquestion]
+    client: Groq, question: str, answered: list[AnsweredSubquestion]
 ) -> str:
     """Compose the narrative report body from the sub-answers (one LLM call).
 

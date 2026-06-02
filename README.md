@@ -15,7 +15,7 @@ It then prints the original question, the generated sub-questions, the final rep
 ## Stack
 
 - **Python** — organized as a small package (`research_agent/`) with separate modules per concern.
-- **Google Gemini API** (free tier via Google AI Studio) — every step runs on `gemini-2.5-flash-lite`, so the project costs nothing to run. See [DECISIONS.md](DECISIONS.md) for why Flash-Lite everywhere rather than a model split.
+- **Groq API** (free tier) — every step runs on `llama-3.3-70b-versatile`, so the project costs nothing to run and has a daily request allowance large enough to iterate on a multi-call agent. See [DECISIONS.md](DECISIONS.md) for the provider history.
 - **Tavily** — web search.
 - **trafilatura** — readable-text extraction from fetched pages.
 - **python-dotenv** — loads API keys from a local `.env` file.
@@ -38,7 +38,7 @@ copy .env.example .env       # Windows  (use `cp` on macOS / Linux)
 
 You need two keys in `.env`:
 
-- `GEMINI_API_KEY` — from <https://aistudio.google.com/apikey> (free).
+- `GROQ_API_KEY` — from <https://console.groq.com/keys> (free).
 - `TAVILY_API_KEY` — from <https://app.tavily.com/> (free tier available).
 
 The `.env` file is gitignored and never committed.
@@ -93,7 +93,7 @@ Source **text** (not just URLs) is threaded from `retrieval` through `synthesis`
 | Module | Responsibility |
 | --- | --- |
 | `config.py` | Loads/validates API keys from `.env`; defines model choices and run limits. |
-| `llm.py` | Thin helpers around the Gemini API (plain-text and JSON replies). |
+| `llm.py` | Thin helpers around the Groq API (plain-text and JSON replies). |
 | `planner.py` | Phase 2 — decomposes the question into sub-questions. |
 | `retrieval.py` | Web search (Tavily) + readable-text extraction (trafilatura). |
 | `relevance.py` | Phase 3A — one batched LLM call per sub-question to drop off-topic sources before synthesis. |

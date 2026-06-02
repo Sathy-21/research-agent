@@ -7,7 +7,7 @@ we fall back to researching the original question directly, so a run never dead-
 
 from __future__ import annotations
 
-from google import genai
+from groq import Groq
 
 from . import config, llm
 
@@ -19,7 +19,7 @@ _PLANNER_SYSTEM = (
 )
 
 
-def make_plan(client: genai.Client, question: str) -> list[str]:
+def make_plan(client: Groq, question: str) -> list[str]:
     """Decompose `question` into a list of sub-questions (one LLM call).
 
     Falls back to `[question]` if the model returns nothing usable.

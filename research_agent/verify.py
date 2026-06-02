@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from google import genai
+from groq import Groq
 
 from . import config, llm
 from .retrieval import Source
@@ -62,7 +62,7 @@ class VerificationReport:
 
 
 def verify_report(
-    client: genai.Client, report_body: str, sources: list[Source]
+    client: Groq, report_body: str, sources: list[Source]
 ) -> VerificationReport:
     """Verify the report's claims against `sources` (one batched LLM call).
 

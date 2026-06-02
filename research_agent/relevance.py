@@ -9,7 +9,7 @@ source — which of the gathered sources are actually relevant, and keep only th
 
 from __future__ import annotations
 
-from google import genai
+from groq import Groq
 
 from . import config, llm
 from .retrieval import Source
@@ -26,7 +26,7 @@ _RELEVANCE_SYSTEM = (
 
 
 def filter_sources(
-    client: genai.Client, subquestion: str, sources: list[Source]
+    client: Groq, subquestion: str, sources: list[Source]
 ) -> list[Source]:
     """Return only the sources relevant to `subquestion` (one batched LLM call).
 

@@ -67,3 +67,25 @@ is printed after the report as a metric to build on in Phase 5.
 now 1 plan + 6×(1 relevance + 1 synthesis) + 1 compose + 1 verification = 15 LLM calls,
 so `MAX_LLM_CALLS` was raised from 12 to 16. Verification is kept to a single batched
 call (all claims at once), not one call per claim.
+
+## Moved the LLM provider from Google Gemini to Groq (free tier)
+
+**What:** Switched all LLM calls from the Gemini API to the Groq API, using
+`llama-3.3-70b-versatile` for every step. The JSON steps use Groq's JSON mode
+(`response_format={"type": "json_object"}`).
+
+**Why:** Gemini's free tier daily request quota was too small to iterate on this agent —
+only ~20 requests/day for Flash-Lite on this account, and a single research run makes up
+to ~15 LLM calls, so barely one run per day was possible. Groq's free tier offers a much
+larger daily allowance, making iteration practical while still costing nothing.
+
+**Why it was a one-module change:** all model access goes through `llm.py`'s two helpers
+(`complete_text`, `complete_json`) with provider-independent signatures. Swapping
+providers meant rewriting only `llm.py` (the request/JSON-mode mechanics) and `config.py`
+(key name + model constants); the planner, relevance filter, synthesis, compose,
+verifier, and agent loop were untouched apart from the client's type annotation. This is
+the third provider on the same interface (Anthropic → Gemini → Groq), which is the
+payoff of keeping the provider behind a thin seam.
+
+**Unchanged:** the graceful-failure handling, the relevance filter, the verifier, and
+the `Budget` cap all carry over without change — they are provider-independent.

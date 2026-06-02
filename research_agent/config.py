@@ -12,20 +12,17 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 
 # --- Model choices ---------------------------------------------------------------
-# We use Gemini's free tier (Google AI Studio) so the project costs nothing to run.
-# We use the Flash-Lite model for every step (planning, relevance filtering, synthesis,
-# compose, verification) rather than splitting in a stronger model for compose. The
-# sensible stronger free-tier model would be Gemini 2.5 Pro, but on the free tier Pro
-# has very low rate limits that a multi-call research run can exhaust, and (unlike
-# Flash-Lite) it cannot disable "thinking", which makes token budgeting less predictable.
-# Flash-Lite everywhere keeps runs free, fast, and within rate limits. The constants are
-# kept separate so a stronger model can be dropped into any single step later without
-# touching the rest of the code.
-PLANNER_MODEL = "gemini-2.5-flash-lite"
-RELEVANCE_MODEL = "gemini-2.5-flash-lite"
-SYNTHESIS_MODEL = "gemini-2.5-flash-lite"
-COMPOSE_MODEL = "gemini-2.5-flash-lite"
-VERIFY_MODEL = "gemini-2.5-flash-lite"
+# We use Groq's free tier, which offers a much larger daily request allowance than
+# Gemini's free tier (enough to actually iterate on this multi-call agent). We use
+# llama-3.3-70b-versatile for every step (planning, relevance filtering, synthesis,
+# compose, verification): it is a strong general model that comfortably handles all of
+# them on the free tier. The constants are kept separate so a stronger model can be
+# dropped into any single step later without touching the rest of the code.
+PLANNER_MODEL = "llama-3.3-70b-versatile"
+RELEVANCE_MODEL = "llama-3.3-70b-versatile"
+SYNTHESIS_MODEL = "llama-3.3-70b-versatile"
+COMPOSE_MODEL = "llama-3.3-70b-versatile"
+VERIFY_MODEL = "llama-3.3-70b-versatile"
 
 # --- Pipeline knobs --------------------------------------------------------------
 MIN_SUBQUESTIONS = 3
@@ -50,7 +47,7 @@ class MissingAPIKey(RuntimeError):
 class Settings:
     """Validated API keys for the current run."""
 
-    gemini_api_key: str
+    groq_api_key: str
     tavily_api_key: str
 
 
@@ -61,13 +58,13 @@ def load_settings() -> Settings:
     caller can fail fast instead of getting an opaque error deep in an API client.
     """
     load_dotenv()
-    gemini_key = os.getenv("GEMINI_API_KEY")
+    groq_key = os.getenv("GROQ_API_KEY")
     tavily_key = os.getenv("TAVILY_API_KEY")
 
     missing = [
         name
         for name, value in (
-            ("GEMINI_API_KEY", gemini_key),
+            ("GROQ_API_KEY", groq_key),
             ("TAVILY_API_KEY", tavily_key),
         )
         if not value
@@ -79,4 +76,4 @@ def load_settings() -> Settings:
             + ". Copy .env.example to .env and fill in your keys."
         )
 
-    return Settings(gemini_api_key=gemini_key, tavily_api_key=tavily_key)
+    return Settings(groq_api_key=groq_key, tavily_api_key=tavily_key)

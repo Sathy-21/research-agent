@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from google import genai
+from groq import Groq
 from tavily import TavilyClient
 
 from . import compose, config, planner, relevance, retrieval, synthesis, verify
@@ -59,7 +59,7 @@ class ResearchResult:
 def run_research(question: str) -> ResearchResult:
     """Run the full research pipeline for a question and return the result."""
     settings = config.load_settings()
-    llm_client = genai.Client(api_key=settings.gemini_api_key)
+    llm_client = Groq(api_key=settings.groq_api_key)
     tavily_client = TavilyClient(api_key=settings.tavily_api_key)
     budget = Budget()
 
