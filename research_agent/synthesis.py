@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from groq import Groq
 
-from . import config, llm
+from . import config, llm, retrieval
 from .retrieval import Source
 
 
@@ -47,10 +47,9 @@ def answer_subquestion(
             [],
         )
 
-    numbered = "\n\n".join(
-        f"[{i}] {source.title} ({source.url})\n{source.text}"
-        for i, source in enumerate(sources, start=1)
-    )
+    # Bound the source text so a sub-question with several long pages can't exceed the
+    # model's per-request token limit (see config.MAX_SOURCE_CONTEXT_CHARS).
+    numbered, _ = retrieval.render_source_context(sources, config.MAX_SOURCE_CONTEXT_CHARS)
     user = (
         f"Sub-question:\n{subquestion}\n\n"
         f"Sources:\n{numbered}\n\n"

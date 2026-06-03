@@ -30,6 +30,16 @@ MAX_SUBQUESTIONS = 6
 RESULTS_PER_SUBQUESTION = 3   # fetch + extract the top N web-search hits per sub-question
 MAX_SOURCE_CHARS = 6000       # truncate each extracted page to bound token cost
 
+# Per-call context budget (Phase 5 hotfix). A single Groq request — input tokens PLUS
+# the reserved completion tokens — must stay under the model's per-minute token limit
+# (12,000 TPM on the free tier) or Groq rejects the whole request with HTTP 413. The
+# verifier in particular concatenates the source text of EVERY unique source in the
+# report, which can balloon past that limit. We cap the largest variable part of a
+# prompt (the concatenated source text; in compose, the findings block) to this many
+# characters (~4 chars/token), leaving headroom below 12,000 for the report, the prompt
+# scaffolding, and the reply. Lower it if you still hit 413; raise it for richer context.
+MAX_SOURCE_CONTEXT_CHARS = 12000   # ~3000 tokens
+
 # --- Input guardrails ------------------------------------------------------------
 # The question is validated before any API call is spent.
 MAX_QUESTION_CHARS = 2000     # reject absurdly long input (cheap DoS / cost guard)

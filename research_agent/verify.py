@@ -26,7 +26,7 @@ from dataclasses import dataclass
 
 from groq import Groq
 
-from . import config, llm
+from . import config, llm, retrieval
 from .retrieval import Source
 
 logger = logging.getLogger(__name__)
@@ -98,9 +98,15 @@ class ClaimCheck:
 
 @dataclass
 class VerificationReport:
-    """The outcome of verifying a report's claims, with grounding statistics."""
+    """The outcome of verifying a report's claims, with grounding statistics.
+
+    `partial` is True when verification ran against a truncated subset of the source
+    text (or could not run fully) because the full context would exceed the model's
+    per-request token limit — so the grounding number reflects only part of the sources.
+    """
 
     claims: list[ClaimCheck]
+    partial: bool = False
 
     @property
     def total(self) -> int:
@@ -144,57 +150,84 @@ def claim_in_report(claim: str, report_body: str) -> bool:
     return overlap >= _IN_REPORT_THRESHOLD
 
 
+def _is_too_large(exc: BaseException) -> bool:
+    """True if an exception signals an over-size request (HTTP 413)."""
+    if getattr(exc, "status_code", None) == 413:
+        return True
+    if getattr(getattr(exc, "response", None), "status_code", None) == 413:
+        return True
+    message = str(exc).lower()
+    return "413" in message or "too large" in message or "request_too_large" in message
+
+
 def verify_report(
     client: Groq, report_body: str, sources: list[Source]
 ) -> VerificationReport:
     """Verify the report's claims against `sources` (one batched LLM call).
 
-    Returns an empty report (no claims) without calling the model if there is nothing
-    to verify, or if the model's reply can't be parsed — degrading gracefully.
+    The source text is trimmed to `config.MAX_SOURCE_CONTEXT_CHARS` so the request stays
+    under the model's per-request token limit. If the request is still rejected as too
+    large (HTTP 413), the budget is halved and retried once; persistent failure (or a
+    truncated context) is reported as a partial verification rather than a crash. A
+    parse failure or empty input degrades to an empty report.
     """
     if not report_body.strip() or not sources:
         return VerificationReport(claims=[])
 
-    source_text = "\n\n".join(
-        f"[{i}] {source.title} ({source.url})\n{source.text}"
-        for i, source in enumerate(sources, start=1)
-    )
     system, directive = _select_prompt()
-    user = f"Sources:\n{source_text}\n\nReport:\n{report_body}\n\n{directive}"
+    budget = config.MAX_SOURCE_CONTEXT_CHARS
 
-    try:
-        data = llm.complete_json(
-            client,
-            model=config.VERIFY_MODEL,
-            system=system,
-            user=user,
-            max_tokens=4000,
-        )
-        # Tolerate either a bare array of claim objects or an object wrapping them
-        # under a key (e.g. {"claims": [...]}).
-        checks: list[ClaimCheck] = []
-        for item in llm.extract_list(data):
-            if not isinstance(item, dict):
-                continue
-            claim = str(item.get("claim", "")).strip()
-            if claim:
-                checks.append(
-                    ClaimCheck(
-                        claim=claim,
-                        supported=bool(item.get("supported")),
-                        in_report=claim_in_report(claim, report_body),
+    for attempt in range(2):
+        source_text, truncated = retrieval.render_source_context(sources, budget)
+        user = f"Sources:\n{source_text}\n\nReport:\n{report_body}\n\n{directive}"
+        try:
+            data = llm.complete_json(
+                client,
+                model=config.VERIFY_MODEL,
+                system=system,
+                user=user,
+                max_tokens=2048,
+            )
+            # Tolerate either a bare array of claim objects or an object wrapping them
+            # under a key (e.g. {"claims": [...]}).
+            checks: list[ClaimCheck] = []
+            for item in llm.extract_list(data):
+                if not isinstance(item, dict):
+                    continue
+                claim = str(item.get("claim", "")).strip()
+                if claim:
+                    checks.append(
+                        ClaimCheck(
+                            claim=claim,
+                            supported=bool(item.get("supported")),
+                            in_report=claim_in_report(claim, report_body),
+                        )
                     )
+        except (ValueError, AttributeError):
+            return VerificationReport(claims=[], partial=truncated)
+        except Exception as exc:  # noqa: BLE001 - degrade instead of crashing the run
+            if _is_too_large(exc) and attempt == 0:
+                logger.warning(
+                    "Verifier request too large; halving source budget and retrying once"
                 )
-    except (ValueError, AttributeError):
-        return VerificationReport(claims=[])
+                budget //= 2
+                continue
+            logger.error("Verification failed (%r); reporting as partial", exc)
+            return VerificationReport(claims=[], partial=True)
 
-    report = VerificationReport(claims=checks)
-    if report.fabricated:
-        logger.debug(
-            "%d of %d extracted claim(s) do not appear in the report (possible fabrication)",
-            report.fabricated, report.total,
-        )
-    return report
+        report = VerificationReport(claims=checks, partial=truncated)
+        if report.fabricated:
+            logger.debug(
+                "%d of %d extracted claim(s) do not appear in the report (possible fabrication)",
+                report.fabricated, report.total,
+            )
+        if report.partial:
+            logger.info("Verification was partial (source text was truncated to fit)")
+        return report
+
+    # Both attempts hit the size wall.
+    logger.error("Verifier request still too large after trimming; skipping verification")
+    return VerificationReport(claims=[], partial=True)
 
 
 def flag_unsupported(report_body: str, verification: VerificationReport) -> str:
@@ -213,8 +246,14 @@ def flag_unsupported(report_body: str, verification: VerificationReport) -> str:
 def grounding_summary(verification: VerificationReport) -> str:
     """One-line grounding metric to print after the report."""
     if verification.total == 0:
-        return "Grounding summary: no factual claims were identified to verify."
+        note = " (verification was partial)" if verification.partial else ""
+        return f"Grounding summary: no factual claims were identified to verify.{note}"
+    partial_note = (
+        " — partial: checked against a truncated subset of sources"
+        if verification.partial
+        else ""
+    )
     return (
         f"Grounding summary: {verification.supported}/{verification.total} claims "
-        f"supported ({verification.percent_grounded:.0f}% grounded)."
+        f"supported ({verification.percent_grounded:.0f}% grounded){partial_note}."
     )

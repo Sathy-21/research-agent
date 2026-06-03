@@ -69,6 +69,35 @@ def fetch_source(hit: dict) -> Source | None:
     )
 
 
+def render_source_context(sources: list[Source], char_budget: int) -> tuple[str, bool]:
+    """Render sources into a numbered context block within a total character budget.
+
+    Distributes the budget evenly across sources (a per-source text cap) and truncates
+    each source's text rather than dropping whole sources, so every source stays
+    represented even when the total would be too large. Returns (block_text, truncated)
+    where `truncated` is True if any source's text was shortened.
+    """
+    if not sources:
+        return "", False
+
+    per_source = max(300, char_budget // len(sources))
+    truncated = False
+    blocks: list[str] = []
+    for index, source in enumerate(sources, start=1):
+        text = source.text
+        if len(text) > per_source:
+            text = text[:per_source].rstrip() + " […truncated]"
+            truncated = True
+        blocks.append(f"[{index}] {source.title} ({source.url})\n{text}")
+
+    if truncated:
+        logger.debug(
+            "Trimmed source context to ~%d chars/source across %d source(s)",
+            per_source, len(sources),
+        )
+    return "\n\n".join(blocks), truncated
+
+
 def gather_sources(tavily: TavilyClient, query: str) -> list[Source]:
     """Search for `query`, then fetch + extract each top hit, skipping failures."""
     hits = search_hits(tavily, query)

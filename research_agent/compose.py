@@ -46,10 +46,16 @@ def compose_report(
     if not answered:
         return "No sufficiently relevant sources were found to answer this question."
 
+    # Compose concatenates the sub-ANSWERS (already short, bounded by synthesis's token
+    # limit), not raw source text — so it is not the usual 413 offender. We still cap the
+    # findings block as a last-resort guard against a pathologically large run exceeding
+    # the model's per-request token limit.
     findings = "\n\n".join(
         f"Sub-question: {item.subquestion}\nFindings: {item.answer}"
         for item in answered
     )
+    if len(findings) > config.MAX_SOURCE_CONTEXT_CHARS:
+        findings = findings[: config.MAX_SOURCE_CONTEXT_CHARS].rstrip() + " […truncated]"
     user = (
         f"Original research question:\n{question}\n\n"
         f"Findings from research:\n\n{findings}"

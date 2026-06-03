@@ -197,3 +197,38 @@ stable grounding and far fewer fabricated claims.
 **Free-tier discipline.** The runner is sequential, reuses the existing retry/backoff,
 and pauses `--delay` seconds between questions so a full run doesn't trip Groq's
 per-minute cap; `--limit N` runs a small subset first.
+
+## Phase 5 hotfix: per-call token-budget cap (HTTP 413)
+
+**The bug.** During eval, the verifier crashed with HTTP 413 "request too large": on one
+question it packed all retrieved source text plus the report into a single prompt and
+requested ~14,447 tokens. Groq's free tier has a **per-minute token limit (12,000 TPM)**,
+and — crucially — a *single request* that exceeds it is rejected outright with 413, no
+matter how long you wait. This is a per-request size problem, not a request-count or
+rate-over-time problem (those surface as 429, which the retry layer already backs off on).
+The retry layer correctly treated 413 as permanent (no point retrying an unchanged
+over-size request); the real fix is to never send an over-size request.
+
+**The cap.** `config.MAX_SOURCE_CONTEXT_CHARS` (default 12,000 chars ≈ 3,000 tokens)
+bounds the largest variable part of a prompt — the concatenated source text. A shared
+helper `retrieval.render_source_context(sources, budget)` distributes the budget evenly
+across sources and truncates each source's text (rather than dropping whole sources, so
+every source stays represented), returning whether truncation occurred. Applied to:
+- **verify** — the offender, which aggregates the text of *every* unique source in the
+  report; and
+- **synthesis** — which concatenates a sub-question's sources.
+- **compose** does *not* concatenate raw source text (it uses the already-short
+  sub-answers), so it isn't the usual offender, but its findings block is capped to the
+  same budget as a last-resort guard. Relevance already used tiny per-source snippets.
+
+Why chars, not a real token count: we don't ship a Llama tokenizer, and ~4 chars/token is
+a good, dependency-free approximation. The default leaves generous headroom below 12,000
+for the report, prompt scaffolding, and the reply (and verify's completion was lowered to
+2,048 tokens). **To tune:** lower `MAX_SOURCE_CONTEXT_CHARS` if 413s persist, raise it for
+richer context.
+
+**Graceful fallback.** If a verify request is *still* rejected as 413 after trimming, the
+verifier halves the budget and retries once; if it still fails, it returns an empty result
+marked `partial=True` instead of crashing. Any run whose source text had to be truncated
+is also marked `partial`, and the grounding summary says so — the number is honest about
+having seen only a subset. 413 is now also listed explicitly as permanent in `retries.py`.

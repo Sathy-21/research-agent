@@ -33,7 +33,9 @@ T = TypeVar("T")
 # Status codes worth retrying (server-side / rate limiting) vs. never retrying (the
 # request itself is wrong and will keep being wrong).
 _TRANSIENT_STATUS = {408, 425, 429, 500, 502, 503, 504}
-_PERMANENT_STATUS = {400, 401, 403, 404, 405, 406, 409, 422}
+# 413 (request/payload too large) is permanent: the request will keep being too large
+# until the caller shrinks it, so retrying only wastes quota. Callers bound their input.
+_PERMANENT_STATUS = {400, 401, 403, 404, 405, 406, 409, 413, 422}
 
 # Substrings in an exception's class name that indicate a transient network problem,
 # for errors that don't expose a status code (e.g. raw timeouts / connection resets).
