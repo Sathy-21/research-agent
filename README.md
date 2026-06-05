@@ -2,6 +2,14 @@
 
 An autonomous research agent that answers a single research question by planning sub-questions, researching each one on the web, and composing a grounded report with sources.
 
+## What this demonstrates
+
+- **Autonomous agent orchestration** — a readable plan → research-loop → compose → verify control flow with a per-run cost/time budget.
+- **RAG-style retrieval and source-grounding** — web search, readable-text extraction, relevance filtering, and answers written only from retrieved sources.
+- **An LLM claim-verification layer** — extracts the report's claims and checks each against the actual source text, producing a grounding metric.
+- **Production robustness** — transient-failure retry/backoff, partial-failure resilience, input/cost/time guardrails, and structured logging.
+- **A custom evaluation harness** — runs the agent over a benchmark and records grounding and process metrics, with a before/after comparison mode.
+
 ## What it does
 
 Given one research question, the agent:
@@ -156,19 +164,34 @@ subset first.
 
 ### Before/after grounding comparison
 
-The verifier's claim-extraction prompt is selectable via the `VERIFIER_MODE` environment
-variable (`new`, the default strict prompt, or `old`, the original loose one). Run the
-eval once in each mode, then compare:
+The verifier's claim-extraction prompt is selectable per run with `--mode` (`new`, the
+default strict prompt, or `old`, the original loose one). Run the eval once in each mode,
+then compare:
 
 ```bash
-VERIFIER_MODE=old python eval/run_eval.py --limit 5   # -> eval/results/old-<ts>.json
-VERIFIER_MODE=new python eval/run_eval.py --limit 5   # -> eval/results/new-<ts>.json
+python eval/run_eval.py --mode old --limit 5   # -> eval/results/old-<ts>.json
+python eval/run_eval.py --mode new --limit 5   # -> eval/results/new-<ts>.json
 python eval/compare.py eval/results/old-<ts>.json eval/results/new-<ts>.json
 ```
 
-`compare.py` prints mean grounding before vs after, mean claims/run, and how many
-fabricated/non-report claims each mode produced (the signal that the strict prompt
-extracts the report's actual claims rather than inventing strawmen).
+(`--mode` is the cross-platform way; the `VERIFIER_MODE` environment variable still works
+as a fallback when `--mode` is not passed.) `compare.py` prints mean grounding before vs
+after, mean claims/run, and how many fabricated/non-report claims each mode produced (the
+signal that the strict prompt extracts the report's actual claims rather than inventing
+strawmen).
+
+**Measured result (single-question illustration, n=1).** On one benchmark question, run
+as a controlled before/after on the same report, switching from the old extraction prompt
+to the revised strict one:
+
+- Claims extracted: **10 → 16** — the strict prompt extracts at a finer, more consistent
+  granularity (specific named techniques, not just broad summary sentences).
+- Grounding: **50% → 69%** supported.
+- Fabricated claims: **0 in both modes** on this question.
+
+This is a single-question illustration of the behavior change, **not** a benchmark-wide
+statistic — it shows how the revised verifier extracts more of the report's actual claims
+and yields a more representative grounding number, not a guaranteed average uplift.
 
 ### Metrics glossary
 
@@ -177,3 +200,14 @@ extracts the report's actual claims rather than inventing strawmen).
   better; the Phase 5 fix drives this toward zero).
 - **sub-questions succeeded / skipped** — pipeline coverage for the run.
 - **LLM calls / search calls / elapsed** — cost and latency, bounded by the `Budget`.
+
+## Key engineering decisions
+
+Real problems solved while building this, each driven by a failure observed during
+testing. Full reasoning is in [DECISIONS.md](DECISIONS.md).
+
+- **Provider-agnostic LLM layer.** All model access goes through two helpers in `llm.py`, so switching providers (Anthropic → Gemini → Groq) was a one-module change — the planner, retrieval, synthesis, compose, and verify code was untouched.
+- **JSON output-shape differences between providers.** Groq's JSON mode returns an object (`{"sub_questions": [...]}`) where Gemini returned a bare array; a shape-tolerant `extract_list` handles both, fixing a planner bug that grabbed the wrapper key instead of the list.
+- **Transient vs. permanent error handling.** The shared retry layer retries only transient failures (429/timeouts/5xx) with exponential backoff + jitter and fails fast on permanent ones (400/401/413), so a blip never discards completed work but a bad request never retries pointlessly.
+- **413 token-budget fix with graceful fallback.** The verifier could exceed Groq's per-request token limit; source text is now budgeted and trimmed, and an over-size request halves its budget and retries, then degrades to a *partial* verification rather than crashing.
+- **Deterministic anti-fabrication check.** Beyond a stricter extraction prompt, each extracted claim is checked against the report by a word-overlap heuristic, so the verifier inventing claims the report never made becomes a countable signal instead of silently skewing the grounding metric.
