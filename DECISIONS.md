@@ -232,3 +232,17 @@ verifier halves the budget and retries once; if it still fails, it returns an em
 marked `partial=True` instead of crashing. Any run whose source text had to be truncated
 is also marked `partial`, and the grounding summary says so — the number is honest about
 having seen only a subset. 413 is now also listed explicitly as permanent in `retries.py`.
+
+## Observation: grounding % partly reflects source quality, not just the verifier
+
+In the 5-question eval (new verifier mode), per-question grounding varied widely
+(33%–91%). This largely tracked **source availability**, not a verifier flaw. Questions
+that pulled paywalled or otherwise inaccessible sources (publisher 403s, redirect loops)
+yielded less usable extracted text, which triggered the partial-verification fallback —
+grounding was then checked against a truncated subset of source text, lowering the
+grounding %.
+
+Takeaway: grounding % is partly a function of retrieval/source quality, not only verifier
+behaviour. It is a known limitation of measuring grounding on free-tier web retrieval: a
+low score can mean "the report is poorly supported" *or* "the sources we could actually
+fetch were thin". The per-run `partial` flag surfaces when the latter is in play.
