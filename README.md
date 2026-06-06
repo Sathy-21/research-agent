@@ -180,18 +180,35 @@ after, mean claims/run, and how many fabricated/non-report claims each mode prod
 signal that the strict prompt extracts the report's actual claims rather than inventing
 strawmen).
 
-**Measured result (single-question illustration, n=1).** On one benchmark question, run
-as a controlled before/after on the same report, switching from the old extraction prompt
-to the revised strict one:
+**Controlled before/after (single question, n=1).** This is the comparison that motivated
+the verifier fix. On one benchmark question, run as a controlled before/after on the same
+report, switching from the old extraction prompt to the revised strict one:
 
 - Claims extracted: **10 → 16** — the strict prompt extracts at a finer, more consistent
   granularity (specific named techniques, not just broad summary sentences).
 - Grounding: **50% → 69%** supported.
 - Fabricated claims: **0 in both modes** on this question.
 
-This is a single-question illustration of the behavior change, **not** a benchmark-wide
+It is a single-question illustration of the behavior change, **not** a benchmark-wide
 statistic — it shows how the revised verifier extracts more of the report's actual claims
 and yields a more representative grounding number, not a guaranteed average uplift.
+
+### Benchmark grounding (new verifier, n=5)
+
+A broader grounding measurement: the agent run with the revised verifier across 5
+benchmark questions (`python eval/run_eval.py --mode new --limit 5`).
+
+- **Mean grounding: 68.7%** across the 5 questions.
+- **Zero fabricated claims across all 5 questions** — the deterministic in-report check
+  holding up consistently, not just on the single question above.
+- **Per-question grounding ranged 33%–91%**, largely tracking source availability:
+  questions that pulled paywalled or otherwise inaccessible sources grounded lower,
+  because verification ran against a truncated subset of source text (the
+  partial-verification fallback).
+
+This is a small benchmark (n=5), meant to show the verifier behaving consistently and the
+grounding metric responding to real source quality — not a rigorous or large-scale
+evaluation.
 
 ### Metrics glossary
 
